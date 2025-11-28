@@ -1,0 +1,24 @@
+# Local env file (sensitive)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# SQLite DBs and other runtime files
+*.db
+*.sqlite
+msa2.db
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
