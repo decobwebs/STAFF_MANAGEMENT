@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: ssms-backend
+    env: python
+    region: oregon
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        sync: false # You’ll set this in Render dashboard
+      - key: SECRET_KEY
+        generateValue: true # Or set manually
+      - key: PYTHON_VERSION
+        value: "3.11.9"
