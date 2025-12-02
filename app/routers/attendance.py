@@ -14,8 +14,21 @@ from calendar import monthrange
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 def get_client_ip(request: Request) -> str:
-    if forwarded := request.headers.get("x-forwarded-for"):
+    """
+    Get client IP from trusted header (X-Real-IP) set by your frontend.
+    Falls back to X-Forwarded-For, then request.client.host.
+    """
+    # Priority 1: Your trusted custom header
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+
+    # Priority 2: Standard proxy header
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
         return forwarded.split(",")[0].strip()
+
+    # Fallback: Direct connection
     return request.client.host
 
 @router.get("/status", response_model=AttendanceStatusResponse)
