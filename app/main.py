@@ -1,23 +1,32 @@
 # app/main.py
 from fastapi import FastAPI
-from app.routers import auth
+from fastapi.middleware.cors import CORSMiddleware  # ← ADD THIS
+from app.routers import auth, attendance, reports, task, performance, dashboard, goal, admin, admin_messages, message, announcements, chat
 from app.database import engine
 from app.models.user import User
-from app.models.attendance import Attendance 
-from app.routers import auth, attendance ,reports, task, performance, dashboard, goal, admin, admin_messages, message, announcements, chat
-from app.models.performance import PerformanceScore 
+from app.models.attendance import Attendance
+from app.models.performance import PerformanceScore
 from app.models.report import DailyReport
 from app.models.task import Task
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 from sqlalchemy.orm import sessionmaker
 import asyncio
 import logging
 from sqlalchemy import exc as sa_exc
-from sqlalchemy.ext.asyncio import AsyncEngine
-
-
 
 app = FastAPI(title="SSMS - Smart Staff Management System", version="1.0")
+
+# === ADD CORS MIDDLEWARE ===
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",             # Next.js dev server
+        "https://your-nextjs-app.vercel.app", # Update with your production domain
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include Routers
 app.include_router(auth.router)

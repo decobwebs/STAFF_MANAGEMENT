@@ -3,7 +3,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select  # 🔴 THIS WAS MISSING!
+from sqlalchemy import select  # 
 from app.database import get_db
 from app.models.user import User
 from app.config import settings
