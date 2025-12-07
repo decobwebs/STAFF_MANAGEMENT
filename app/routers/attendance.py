@@ -176,25 +176,46 @@ async def get_attendance_history(
             total_minutes += int(duration.total_seconds() // 60)
 
     # Build full month calendar
+        # Build full month calendar
     days = []
     current = start_date
+    now_utc = datetime.now(timezone.utc)
     while current <= end_date:
         if current in record_map:
             rec = record_map[current]
+            check_in_time = rec.check_in_at
+
+            # Determine if check-in was late (> 7:00 AM local time)
+            # Assuming your app uses local time (not UTC) for business hours.
+            # If your server is UTC but work hours are in a specific TZ (e.g. 'Africa/Lagos'),
+            # you should convert. But since you didn't specify, we'll assume server time = local time.
+            # If you use UTC, replace with proper timezone conversion.
+            is_late = check_in_time.time() > datetime.strptime("10:50", "%H:%M").time()
+
             if rec.check_out_at:
                 status = "completed"
                 duration = rec.check_out_at - rec.check_in_at
                 total_work_minutes = int(duration.total_seconds() // 60)
+                missed_checkout = False
             else:
                 status = "checked_in_only"
                 total_work_minutes = None
+                # Check if today and past 8 PM — mark as missed checkout
+                if current == now_utc.date():
+                    missed_checkout = now_utc.time() >= datetime.strptime("23:00", "%H:%M").time()
+                else:
+                    # Past day with no checkout → definitely missed
+                    missed_checkout = True
+
             days.append(
                 DailyAttendanceRecord(
                     date=current,
                     status=status,
                     check_in_time=rec.check_in_at,
                     check_out_time=rec.check_out_at,
-                    total_work_time_minutes=total_work_minutes
+                    total_work_time_minutes=total_work_minutes,
+                    is_late=is_late,
+                    missed_checkout=missed_checkout
                 )
             )
         else:
@@ -204,7 +225,9 @@ async def get_attendance_history(
                     status="missed",
                     check_in_time=None,
                     check_out_time=None,
-                    total_work_time_minutes=None
+                    total_work_time_minutes=None,
+                    is_late=False,
+                    missed_checkout=False
                 )
             )
         current += timedelta(days=1)
