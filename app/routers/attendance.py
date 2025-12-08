@@ -177,6 +177,7 @@ async def get_attendance_history(
 
     # Build full month calendar
         # Build full month calendar
+        # Build full month calendar
     days = []
     current = start_date
     now_utc = datetime.now(timezone.utc)
@@ -193,15 +194,12 @@ async def get_attendance_history(
                 duration = rec.check_out_at - rec.check_in_at
                 total_work_minutes = int(duration.total_seconds() // 60)
                 missed_checkout = False
-
-                # Late check-out: after 8:00 PM on the same day
                 is_late_checkout = rec.check_out_at.time() > datetime.strptime("20:00", "%H:%M").time()
             else:
                 status = "checked_in_only"
                 total_work_minutes = None
-                is_late_checkout = False  # can't be late if not checked out
-
-                # Mark missed checkout if past 8 PM today, or any past day
+                is_late_checkout = False
+                # Missed checkout if past 8 PM today, or any past day without checkout
                 if current == now_utc.date():
                     missed_checkout = now_utc.time() >= datetime.strptime("20:00", "%H:%M").time()
                 else:
@@ -217,6 +215,20 @@ async def get_attendance_history(
                     is_late=is_late,
                     is_late_checkout=is_late_checkout,
                     missed_checkout=missed_checkout
+                )
+            )
+        else:
+            # 👉 Absent: no check-in at all on this day
+            days.append(
+                DailyAttendanceRecord(
+                    date=current,
+                    status="absent",  # 👈 explicitly mark as absent
+                    check_in_time=None,
+                    check_out_time=None,
+                    total_work_time_minutes=None,
+                    is_late=False,
+                    is_late_checkout=False,
+                    missed_checkout=False
                 )
             )
         current += timedelta(days=1)
