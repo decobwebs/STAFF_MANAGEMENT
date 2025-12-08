@@ -108,6 +108,7 @@ async def check_in(
 
 @router.post("/check-out", response_model=AttendanceResponse)
 async def check_out(
+    request: Request,  # 👈 Add Request to get client IP
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
@@ -122,6 +123,15 @@ async def check_out(
     record = existing.scalar_one_or_none()
     if not record:
         raise HTTPException(400, "No active check-in found for today. Please check in first.")
+
+    # 🔒 Enforce allowed IP for check-out (same as check-in)
+    client_ip = get_client_ip(request)
+    allowed_ips = settings.allowed_ips
+    if allowed_ips is not None and client_ip not in allowed_ips:
+        raise HTTPException(403, f"IP {client_ip} not allowed for check-out")
+
+    # Optional: Store check-out IP (if you want to log it)
+    # record.check_out_ip = client_ip  # ← only if you add this column later
 
     record.check_out_at = datetime.now()
     db.add(record)
