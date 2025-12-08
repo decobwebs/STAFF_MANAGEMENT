@@ -33,6 +33,7 @@ class DailyAttendanceRecord(BaseModel):
     check_out_time: Optional[datetime] = None
     total_work_time_minutes: Optional[int] = None
     is_late: bool = False
+    is_late_checkout: bool = False   
     missed_checkout: bool = False
 
 class MonthlyAttendanceResponse(BaseModel):
