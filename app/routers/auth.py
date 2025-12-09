@@ -10,7 +10,7 @@ from app.utils.password import hash_password, verify_password
 from app.core.security import create_access_token, create_refresh_token
 from app.core.auth import get_current_user
 from app.schemas.auth import ChangePasswordRequest
-
+from app.schemas.user import UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -109,3 +109,34 @@ async def change_password(
     await db.commit()
 
     return {"message": "Password updated successfully"}
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    update_data: UserUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Check if email is being changed
+    if update_data.email is not None:
+        # Ensure new email is not already taken (by someone else)
+        if update_data.email != current_user.email:
+            existing = await db.execute(
+                select(User).where(User.email == update_data.email)
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already in use"
+                )
+        current_user.email = update_data.email
+
+    # Update name if provided
+    if update_data.name is not None:
+        current_user.name = update_data.name
+
+    # Save changes
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+
+    return current_user

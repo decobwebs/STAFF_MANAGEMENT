@@ -1,6 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import date
+from typing import Optional
+from pydantic import BaseModel, model_validator
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -22,3 +24,16 @@ class Token(BaseModel):
     refresh_token: str
     token_type: str
     user: UserResponse
+
+
+# app/schemas/user.py
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+    @model_validator(mode='after')
+    def at_least_one_field(self):
+        if self.name is None and self.email is None:
+            raise ValueError("At least one field (name or email) must be provided")
+        return self
