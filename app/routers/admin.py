@@ -349,3 +349,30 @@ async def admin_get_staff_profile(
         goals=goal_list,
         achievements=[]
     )
+
+
+
+@router.get("/staff", response_model=List[AdminStaffReportItem])
+async def admin_list_staff(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    """
+    Returns list of all staff members (id, name, email) for task assignment.
+    """
+    staff_result = await db.execute(
+        select(User.id, User.name, User.email)
+        .where(User.role == "staff")
+        .order_by(User.name)
+    )
+    staff_list = staff_result.fetchall()
+
+    return [
+        AdminStaffReportItem(
+            id=row.id,
+            name=row.name or "",  # in case name is NULL
+            email=row.email,
+            status=""  # not used here, but required by schema
+        )
+        for row in staff_list
+    ]
