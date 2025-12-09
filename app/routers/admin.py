@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, not_
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from app.database import get_db
 from app.core.auth import get_current_admin
 from app.models.user import User
@@ -17,6 +17,11 @@ from datetime import timezone
 from app.schemas.admin import StaffProfileResponse
 from app.models.goal import Goal, GoalUpdate
 from app.schemas.goal import GoalDetailResponse, GoalUpdateResponse
+from app.schemas.attendance import DailyAttendanceRecord, MonthlyAttendanceResponse
+from app.schemas.report import ReportHistoryResponse, ReportHistoryItem
+from datetime import date
+from calendar import monthrange
+
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -376,3 +381,187 @@ async def admin_list_staff(
         )
         for row in staff_list
     ]
+
+
+
+
+
+@router.get("/staff/{user_id}/attendance", response_model=MonthlyAttendanceResponse)
+async def admin_get_staff_attendance(
+    user_id: int,
+    month: int = None,
+    year: int = None,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    # Optional: verify user exists and is staff
+    user_check = await db.execute(
+        select(User).where(User.id == user_id, User.role == "staff")
+    )
+    if not user_check.scalar_one_or_none():
+        raise HTTPException(404, "Staff not found")
+
+    now = datetime.now(timezone.utc)
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    if not (1 <= month <= 12):
+        raise HTTPException(400, "Invalid month")
+    if year < 1900 or year > 2100:
+        raise HTTPException(400, "Invalid year")
+
+    # Reuse your existing attendance logic (copy-paste for now, or refactor later)
+    num_days = monthrange(year, month)[1]
+    start_date = date(year, month, 1)
+    end_date = date(year, month, num_days)
+
+    result = await db.execute(
+        select(Attendance)
+        .where(Attendance.user_id == user_id)
+        .where(func.date(Attendance.check_in_at) >= start_date)
+        .where(func.date(Attendance.check_in_at) <= end_date)
+        .order_by(Attendance.check_in_at)
+    )
+    records = result.scalars().all()
+
+    record_map = {}
+    total_minutes = 0
+    for rec in records:
+        rec_date = rec.check_in_at.date()
+        record_map[rec_date] = rec
+        if rec.check_out_at:
+            total_minutes += int((rec.check_out_at - rec.check_in_at).total_seconds() // 60)
+
+    days = []
+    current = start_date
+    now_utc = datetime.now(timezone.utc)
+    while current <= end_date:
+        if current in record_map:
+            rec = record_map[current]
+            is_late = rec.check_in_at.time() > datetime.strptime("07:00", "%H:%M").time()
+            if rec.check_out_at:
+                status = "completed"
+                total_work_minutes = int((rec.check_out_at - rec.check_in_at).total_seconds() // 60)
+                missed_checkout = False
+                is_late_checkout = rec.check_out_at.time() > datetime.strptime("20:00", "%H:%M").time()
+            else:
+                status = "checked_in_only"
+                total_work_minutes = None
+                is_late_checkout = False
+                missed_checkout = (current == now_utc.date() and now_utc.time() >= datetime.strptime("20:00", "%H:%M").time()) or (current < now_utc.date())
+            days.append(
+                DailyAttendanceRecord(
+                    date=current,
+                    status=status,
+                    check_in_time=rec.check_in_at,
+                    check_out_time=rec.check_out_at,
+                    total_work_time_minutes=total_work_minutes,
+                    is_late=is_late,
+                    is_late_checkout=is_late_checkout,
+                    missed_checkout=missed_checkout
+                )
+            )
+        else:
+            days.append(
+                DailyAttendanceRecord(
+                    date=current,
+                    status="absent",
+                    check_in_time=None,
+                    check_out_time=None,
+                    total_work_time_minutes=None,
+                    is_late=False,
+                    is_late_checkout=False,
+                    missed_checkout=False
+                )
+            )
+        current += timedelta(days=1)
+
+    total_hours = round(total_minutes / 60, 2)
+    return MonthlyAttendanceResponse(month=month, year=year, total_work_hours=total_hours, days=days)
+
+
+@router.get("/staff/{user_id}/reports", response_model=ReportHistoryResponse)
+async def admin_get_staff_reports(
+    user_id: int,
+    month: int = None,
+    year: int = None,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    # Verify staff exists
+    user_check = await db.execute(
+        select(User).where(User.id == user_id, User.role == "staff")
+    )
+    if not user_check.scalar_one_or_none():
+        raise HTTPException(404, "Staff not found")
+
+    now = datetime.now()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    if not (1 <= month <= 12):
+        raise HTTPException(400, "Invalid month")
+    if year < 1900 or year > 2100:
+        raise HTTPException(400, "Invalid year")
+
+    # Get first report
+    first_report = await db.execute(
+        select(DailyReport)
+        .where(DailyReport.user_id == user_id)
+        .order_by(DailyReport.date)
+        .limit(1)
+    )
+    first = first_report.scalar_one_or_none()
+    if not first:
+        return ReportHistoryResponse(month=month, year=year, reports=[])
+
+    first_date = first.date.date()
+    start_of_month = date(year, month, 1)
+    today = now.date()
+    end_of_month = date(year, month, monthrange(year, month)[1])
+    report_start = max(first_date, start_of_month)
+    report_end = min(end_of_month, today)
+
+    if report_start > report_end:
+        return ReportHistoryResponse(month=month, year=year, reports=[])
+
+    result = await db.execute(
+        select(DailyReport)
+        .where(DailyReport.user_id == user_id)
+        .where(func.date(DailyReport.date) >= report_start)
+        .where(func.date(DailyReport.date) <= report_end)
+    )
+    reports = result.scalars().all()
+    report_map = {r.date.date(): r for r in reports}
+
+    report_list = []
+    current = report_start
+    while current <= report_end:
+        if current in report_map:
+            r = report_map[current]
+            item = ReportHistoryItem(
+                date=current,
+                status="submitted",
+                achievements=r.achievements,
+                challenges=r.challenges,
+                completed_tasks=r.completed_tasks,
+                plans_for_tomorrow=r.plans_for_tomorrow
+            )
+        else:
+            status = "missed" if current < today else "pending"
+            item = ReportHistoryItem(
+                date=current,
+                status=status,
+                achievements=None,
+                challenges=None,
+                completed_tasks=None,
+                plans_for_tomorrow=None
+            )
+        report_list.append(item)
+        current += timedelta(days=1)
+
+    return ReportHistoryResponse(month=month, year=year, reports=report_list)

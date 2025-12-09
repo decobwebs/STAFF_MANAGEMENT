@@ -13,6 +13,83 @@ today = datetime.now().date()
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+
+# Helper function to fetch report history for any user
+async def _get_report_history_for_user(
+    db: AsyncSession,
+    user_id: int,
+    month: int,
+    year: int
+) -> ReportHistoryResponse:
+    from datetime import datetime, date, timedelta
+    from calendar import monthrange
+
+    now = datetime.now()
+    today = now.date()
+    start_of_month = date(year, month, 1)
+    end_of_month = date(year, month, monthrange(year, month)[1])
+    report_end = min(end_of_month, today)
+
+    # Check if user has any reports at all
+    first_report = await db.execute(
+        select(DailyReport)
+        .where(DailyReport.user_id == user_id)
+        .order_by(DailyReport.date)
+        .limit(1)
+    )
+    first = first_report.scalar_one_or_none()
+    if not first:
+        return ReportHistoryResponse(month=month, year=year, reports=[])
+
+    first_date = first.date.date()
+    report_start = max(first_date, start_of_month)
+
+    if report_start > report_end:
+        return ReportHistoryResponse(month=month, year=year, reports=[])
+
+    # Fetch all reports in range
+    result = await db.execute(
+        select(DailyReport)
+        .where(DailyReport.user_id == user_id)
+        .where(func.date(DailyReport.date) >= first_date)
+        .where(func.date(DailyReport.date) <= report_end)
+    )
+    all_reports = result.scalars().all()
+    report_map = {rep.date.date(): rep for rep in all_reports}
+
+    # Build timeline
+    current = report_start
+    report_list = []
+    while current <= report_end:
+        if current in report_map:
+            rep = report_map[current]
+            item = ReportHistoryItem(
+                date=current,
+                status="submitted",
+                achievements=rep.achievements,
+                challenges=rep.challenges,
+                completed_tasks=rep.completed_tasks,
+                plans_for_tomorrow=rep.plans_for_tomorrow
+            )
+        else:
+            status = "missed" if current < today else "pending"
+            item = ReportHistoryItem(
+                date=current,
+                status=status,
+                achievements=None,
+                challenges=None,
+                completed_tasks=None,
+                plans_for_tomorrow=None
+            )
+        report_list.append(item)
+        current += timedelta(days=1)
+
+    return ReportHistoryResponse(
+        month=month,
+        year=year,
+        reports=report_list
+    )
+
 @router.post("", response_model=ReportResponse)
 async def submit_report(
     report_in: ReportCreate,
@@ -109,7 +186,7 @@ async def get_report_history(
     if year < 1900 or year > 2100:
         raise HTTPException(400, "Invalid year")
 
-    # Find user's first report
+    # Find user's first ever report
     first_report = await db.execute(
         select(DailyReport)
         .where(DailyReport.user_id == current_user.id)
@@ -124,7 +201,7 @@ async def get_report_history(
     start_of_month = date(year, month, 1)
     report_start = max(first_date, start_of_month)
 
-    # ✅ Cap at today — no future dates
+    # Cap at today — no future dates
     today = now.date()
     end_of_month = date(year, month, monthrange(year, month)[1])
     report_end = min(end_of_month, today)
@@ -132,23 +209,22 @@ async def get_report_history(
     if report_start > report_end:
         return ReportHistoryResponse(month=month, year=year, reports=[])
 
-    # Fetch all reports from first_date to report_end
+    # Fetch all reports from report_start to report_end
     result = await db.execute(
         select(DailyReport)
         .where(DailyReport.user_id == current_user.id)
-        .where(func.date(DailyReport.date) >= first_date)
+        .where(func.date(DailyReport.date) >= report_start)
         .where(func.date(DailyReport.date) <= report_end)
     )
     all_reports = result.scalars().all()
     report_map = {rep.date.date(): rep for rep in all_reports}
 
-    # Generate timeline
+    # Generate full timeline from report_start to report_end
     current = report_start
     report_list = []
     while current <= report_end:
         if current in report_map:
             rep = report_map[current]
-            # User submitted a report
             item = ReportHistoryItem(
                 date=current,
                 status="submitted",
@@ -169,7 +245,7 @@ async def get_report_history(
                     plans_for_tomorrow=None
                 )
             else:
-                # Today or future → but future is already excluded, so only "today"
+                # Today (and no report yet) → pending
                 item = ReportHistoryItem(
                     date=current,
                     status="pending",

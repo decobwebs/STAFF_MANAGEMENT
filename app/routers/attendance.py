@@ -31,6 +31,99 @@ def get_client_ip(request: Request) -> str:
     # Fallback: Direct connection
     return request.client.host
 
+# Helper function to fetch attendance history for any user
+async def _get_attendance_history_for_user(
+    db: AsyncSession,
+    user_id: int,
+    month: int,
+    year: int
+) -> MonthlyAttendanceResponse:
+    from calendar import monthrange
+    from datetime import datetime, timezone, date, timedelta
+
+    now_utc = datetime.now(timezone.utc)
+    num_days = monthrange(year, month)[1]
+    start_date = date(year, month, 1)
+    end_date = date(year, month, num_days)
+
+    # Fetch attendance records for the user
+    result = await db.execute(
+        select(Attendance)
+        .where(Attendance.user_id == user_id)
+        .where(func.date(Attendance.check_in_at) >= start_date)
+        .where(func.date(Attendance.check_in_at) <= end_date)
+        .order_by(Attendance.check_in_at)
+    )
+    records = result.scalars().all()
+
+    record_map = {}
+    total_minutes = 0
+    for rec in records:
+        rec_date = rec.check_in_at.date()
+        record_map[rec_date] = rec
+        if rec.check_out_at:
+            duration = rec.check_out_at - rec.check_in_at
+            total_minutes += int(duration.total_seconds() // 60)
+
+    days = []
+    current = start_date
+    while current <= end_date:
+        if current in record_map:
+            rec = record_map[current]
+            check_in_time = rec.check_in_at
+            is_late = check_in_time.time() > datetime.strptime("07:00", "%H:%M").time()
+
+            if rec.check_out_at:
+                status = "completed"
+                duration = rec.check_out_at - rec.check_in_at
+                total_work_minutes = int(duration.total_seconds() // 60)
+                missed_checkout = False
+                is_late_checkout = rec.check_out_at.time() > datetime.strptime("20:00", "%H:%M").time()
+            else:
+                status = "checked_in_only"
+                total_work_minutes = None
+                is_late_checkout = False
+                if current == now_utc.date():
+                    missed_checkout = now_utc.time() >= datetime.strptime("20:00", "%H:%M").time()
+                else:
+                    missed_checkout = True
+
+            days.append(
+                DailyAttendanceRecord(
+                    date=current,
+                    status=status,
+                    check_in_time=rec.check_in_at,
+                    check_out_time=rec.check_out_at,
+                    total_work_time_minutes=total_work_minutes,
+                    is_late=is_late,
+                    is_late_checkout=is_late_checkout,
+                    missed_checkout=missed_checkout
+                )
+            )
+        else:
+            days.append(
+                DailyAttendanceRecord(
+                    date=current,
+                    status="absent",
+                    check_in_time=None,
+                    check_out_time=None,
+                    total_work_time_minutes=None,
+                    is_late=False,
+                    is_late_checkout=False,
+                    missed_checkout=False
+                )
+            )
+        current += timedelta(days=1)
+
+    total_hours = round(total_minutes / 60, 2)
+    return MonthlyAttendanceResponse(
+        month=month,
+        year=year,
+        total_work_hours=total_hours,
+        days=days
+    )
+
+
 @router.get("/status", response_model=AttendanceStatusResponse)
 async def get_attendance_status(
     db: AsyncSession = Depends(get_db),
@@ -147,7 +240,7 @@ async def get_attendance_history(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    # Default to current month/year
+    # Default to current month/year (UTC)
     now = datetime.now(timezone.utc)
     if month is None:
         month = now.month
@@ -165,7 +258,7 @@ async def get_attendance_history(
     start_date = date(year, month, 1)
     end_date = date(year, month, num_days)
 
-    # Fetch all attendance records for the month
+    # Fetch all attendance records for the user in the month
     result = await db.execute(
         select(Attendance)
         .where(Attendance.user_id == current_user.id)
@@ -185,9 +278,7 @@ async def get_attendance_history(
             duration = rec.check_out_at - rec.check_in_at
             total_minutes += int(duration.total_seconds() // 60)
 
-    # Build full month calendar
-        # Build full month calendar
-        # Build full month calendar
+    # Build full month calendar with all days
     days = []
     current = start_date
     now_utc = datetime.now(timezone.utc)
@@ -228,11 +319,11 @@ async def get_attendance_history(
                 )
             )
         else:
-            # 👉 Absent: no check-in at all on this day
+            # No check-in at all → absent
             days.append(
                 DailyAttendanceRecord(
                     date=current,
-                    status="absent",  # 👈 explicitly mark as absent
+                    status="absent",
                     check_in_time=None,
                     check_out_time=None,
                     total_work_time_minutes=None,
